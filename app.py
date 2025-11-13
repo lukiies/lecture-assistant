@@ -27,13 +27,11 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-# -------------------------
-# Query/Response Logging
-# -------------------------
 import datetime
 
 def log_llm_interaction(chunk_num: int, total_chunks: int, query: str, response: str, log_file: str = "llm_interactions.log"):
     """
+    Query/Response Logging
     Log every query sent to the LLM and its response to a separate file for analysis.
     
     Args:
@@ -68,13 +66,11 @@ def clear_llm_log(log_file: str = "llm_interactions.log"):
             f.write(f"LLM INTERACTION LOG\n")
             f.write(f"Started: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("="*100 + "\n\n")
-        logging.info(f"📝 LLM interaction log initialized: {log_file}")
+        logging.info(f"* LLM interaction log initialized: {log_file}")
     except Exception as e:
-        logging.warning(f"⚠️  Could not initialize LLM log: {e}")
+        logging.warning(f"!  Could not initialize LLM log: {e}")
 
-# -------------------------
 # Hardware Detection
-# -------------------------
 MLX_AVAILABLE = False
 CUDA_AVAILABLE = False
 CPU_ONLY = False
@@ -85,9 +81,9 @@ try:
     import mlx_whisper
     MLX_AVAILABLE = True
     DEVICE_TYPE = "MLX"
-    logging.info("✅ MLX (Apple Silicon) detected and available")
+    logging.info("+ MLX (Apple Silicon) detected and available")
 except ImportError:
-    logging.info("❌ MLX not available")
+    logging.info("- MLX not available")
 
 # Check for CUDA and PyTorch
 try:
@@ -98,18 +94,18 @@ try:
         device_count = torch.cuda.device_count()
         device_name = torch.cuda.get_device_name(0)
         total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
-        logging.info(f"✅ CUDA available with {device_count} device(s): {device_name}")
+        logging.info(f"+ CUDA available with {device_count} device(s): {device_name}")
         logging.info(f"   GPU Memory: {total_memory:.2f} GB")
     else:
         if not MLX_AVAILABLE:
             CPU_ONLY = True
             DEVICE_TYPE = "CPU"
-            logging.info("⚠️  CUDA not available, using CPU mode")
+            logging.info("!  CUDA not available, using CPU mode")
 except ImportError:
     if not MLX_AVAILABLE:
         CPU_ONLY = True
         DEVICE_TYPE = "CPU"
-        logging.warning("⚠️  PyTorch not installed, defaulting to CPU mode")
+        logging.warning("!  PyTorch not installed, defaulting to CPU mode")
 
 # Attempt to import Hugging Face transformers
 try:
@@ -117,10 +113,10 @@ try:
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from transformers import pipeline
     HF_AVAILABLE = True
-    logging.info(f"✅ Hugging Face Transformers available (using {DEVICE_TYPE})")
+    logging.info(f"+ Hugging Face Transformers available (using {DEVICE_TYPE})")
 except ImportError:
     HF_AVAILABLE = False
-    logging.warning("❌ Hugging Face Transformers not available")
+    logging.warning("- Hugging Face Transformers not available")
 
 # Check for BitsAndBytes (needed for 4-bit quantization on CUDA)
 BITSANDBYTES_AVAILABLE = False
@@ -129,40 +125,36 @@ if CUDA_AVAILABLE and HF_AVAILABLE:
         from transformers import BitsAndBytesConfig
         import bitsandbytes
         BITSANDBYTES_AVAILABLE = True
-        logging.info("✅ BitsAndBytes available for 4-bit quantization")
+        logging.info("+ BitsAndBytes available for 4-bit quantization")
     except ImportError:
-        logging.warning("⚠️  BitsAndBytes not available - 4-bit quantization disabled")
-        logging.warning("   Install with: pip install bitsandbytes")
+        logging.warning("-  BitsAndBytes not available - 4-bit quantization disabled")
+        logging.warning("!  Install with: pip install bitsandbytes")
 
 # Ensure at least one backend is available
 if not MLX_AVAILABLE and not HF_AVAILABLE:
     raise ImportError("Please install either 'mlx-whisper' or 'transformers' with 'torch' to use this module.")
 
 # Log final hardware configuration
-logging.info("=" * 60)
+logging.info("=" * 30)
 logging.info(f"HARDWARE CONFIGURATION: {DEVICE_TYPE}")
 logging.info(f"  MLX Available: {MLX_AVAILABLE}")
 logging.info(f"  CUDA Available: {CUDA_AVAILABLE}")
 logging.info(f"  CPU Only: {CPU_ONLY}")
 logging.info(f"  Hugging Face: {HF_AVAILABLE}")
-logging.info("=" * 60)
+logging.info("=" * 30)
 
-# -------------------------
 # Abstract Interfaces
-# -------------------------
 class TranscriptionService(ABC):
     @abstractmethod
     def transcribe(self, audio_file: str) -> str:
-        pass
+        raise NotImplementedError("TranscriptionService: Subclasses must implement this method")
 
 class SummarizationService(ABC):
     @abstractmethod
     def summarize(self, prompt: str) -> str:
-        pass
+        raise NotImplementedError("SummarizationService: Subclasses must implement this method")
 
-# -------------------------
-# Concrete Adapters
-# -------------------------
+# MLX Adapter implementation
 class MLXWhisperAdapter(TranscriptionService):
     def __init__(self, model_name: str):
         if not MLX_AVAILABLE:
@@ -178,7 +170,7 @@ class MLXWhisperAdapter(TranscriptionService):
         return str(text)
 
 class HuggingFaceWhisperAdapter(TranscriptionService):
-    """Supports both CUDA and CPU backends with long-form audio support"""
+    """Supports both CUDA and CPU backends with long-form audio support (longer than 30s)"""
     def __init__(self, model_name: str, lazy_load: bool = False):
         if not HF_AVAILABLE:
             raise ImportError("Hugging Face transformers not available.")
@@ -191,32 +183,30 @@ class HuggingFaceWhisperAdapter(TranscriptionService):
             self.device = 0
             self.torch_dtype = torch.float16
             self.device_name = torch.cuda.get_device_name(0)
-            # Enable chunking for long audio files on CUDA
+            # Enable chunking for long audio files on CUDA (! super important for long files)
             self.chunk_length_s = 30  # Process in 30-second chunks
             self.batch_size = 8  # Batch size for CUDA
-            logging.info(f"🔧 Whisper adapter configured for CUDA on {self.device_name}")
-            logging.info(f"   Long-form audio: enabled (chunk_length={self.chunk_length_s}s, batch_size={self.batch_size})")
+            logging.info(f"* Whisper adapter configured for CUDA on {self.device_name}")
+            logging.info(f"  Long-form audio: enabled (chunk_length={self.chunk_length_s}s, batch_size={self.batch_size})")
         else:
             self.device = -1  # CPU
             self.torch_dtype = torch.float32
             self.device_name = "CPU"
-            # Smaller batch for CPU
             self.chunk_length_s = 30
-            self.batch_size = 4
-            logging.info("🔧 Whisper adapter configured for CPU (this may be slower)")
-        
-        # Load immediately if not lazy loading
-        if not lazy_load:
+            self.batch_size = 4 # Smaller batch for CPU
+            logging.info("* Whisper adapter configured for CPU (this may be 30-100x slower than with CUDA/MLX)")
+                
+        if not lazy_load: # Load immediately if not lazy loading, means: the weights are loaded into memory with the first inference
             self._load_model()
     
     def _load_model(self):
         """Load the Whisper model into memory"""
         if self.pipe is not None:
-            logging.info("⚠️  Whisper model already loaded, skipping")
+            logging.info("!  Whisper model already loaded, skipping")
             return
         
-        logging.info(f"📥 Loading Whisper model: {self.model_name}")
-        log_cuda_memory_usage("Before Whisper Load")
+        logging.info(f"* Loading Whisper model: {self.model_name}")
+        log_cuda_memory_usage("Before Whisper Load") # a lot of VRAM memory testing in the code (there is)
         
         try:
             # For CUDA with long audio support, we use return_timestamps and chunking
@@ -232,10 +222,10 @@ class HuggingFaceWhisperAdapter(TranscriptionService):
                 pipeline_kwargs["batch_size"] = self.batch_size
             
             self.pipe = pipeline("automatic-speech-recognition", **pipeline_kwargs)
-            logging.info(f"✅ Whisper model loaded successfully on {self.device_name}")
-            log_cuda_memory_usage("After Whisper Load")
+            logging.info(f"+ Whisper model loaded successfully on {self.device_name}")
+            log_cuda_memory_usage("After Whisper Load") # we need to control the VRAM usage all the time for (laptop's) embedded systems
         except Exception as e:
-            logging.error(f"❌ Failed to load Whisper model: {e}")
+            logging.error(f"- Failed to load Whisper model: {e}")
             raise
     
     def unload_model(self):
@@ -243,7 +233,7 @@ class HuggingFaceWhisperAdapter(TranscriptionService):
         if self.pipe is None:
             return
         
-        logging.info("🗑️  Unloading Whisper model from memory")
+        logging.info("*  Unloading Whisper model from memory")
         log_cuda_memory_usage("Before Whisper Unload")
         
         # Delete the pipeline
@@ -256,7 +246,7 @@ class HuggingFaceWhisperAdapter(TranscriptionService):
             gc.collect()
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-            logging.info("✅ CUDA cache cleared after Whisper unload")
+            logging.info("+ CUDA cache cleared after Whisper unload")
         
         log_cuda_memory_usage("After Whisper Unload")
 
@@ -265,7 +255,7 @@ class HuggingFaceWhisperAdapter(TranscriptionService):
         if self.pipe is None:
             self._load_model()
         
-        logging.info(f"🎤 Transcribing with Hugging Face Whisper ({self.device_name}): {self.model_name}")
+        logging.info(f"* Transcribing with Hugging Face Whisper ({self.device_name}): {self.model_name}")
         log_cuda_memory_usage("Before Transcription")
         
         try:
@@ -287,7 +277,7 @@ class HuggingFaceWhisperAdapter(TranscriptionService):
                     )
                 except Exception as e:
                     # If that fails, try without return_timestamps
-                    logging.warning(f"⚠️  Timestamps not supported, retrying without: {e}")
+                    logging.warning(f"!  Timestamps not supported, retrying without: {e}")
                     result = self.pipe(audio_file, generate_kwargs=generate_kwargs)
                 # Extract text from chunks if timestamps are returned
                 if isinstance(result, dict) and "chunks" in result:
@@ -295,17 +285,17 @@ class HuggingFaceWhisperAdapter(TranscriptionService):
                 elif isinstance(result, dict) and "text" in result:
                     text = result["text"]
                 else:
-                    text = str(result)
+                    text = str(result) # just in case - should not happen, but..
             else:
-                # CPU: simpler approach
+                # just for CPU
                 result = self.pipe(audio_file)
                 text = result["text"]
             
-            logging.info(f"✅ Transcription completed on {self.device_name}")
-            log_cuda_memory_usage("After Transcription")
+            logging.info(f"+ Transcription completed on {self.device_name}")
+            log_cuda_memory_usage("After Transcription") # to clarify: no messages generated without CUDA in this function
             return text
         except Exception as e:
-            logging.error(f"❌ Transcription failed: {e}")
+            logging.error(f"- Transcription failed: {e}")
             raise
 
 class CloudWhisperAdapter(TranscriptionService):
@@ -347,8 +337,7 @@ class HuggingFaceLLMAdapter(SummarizationService):
         self.model = None
         self.tokenizer = None
         
-        # CRITICAL FIX: Always use 4-bit quantization on CUDA for 8GB VRAM
-        # The old check for "-4bit" in name was wrong - all CUDA models should be quantized!
+        # Always use 4-bit quantization on CUDA
         self.use_4bit = CUDA_AVAILABLE and BITSANDBYTES_AVAILABLE
         
         # Determine device and configuration
@@ -360,29 +349,28 @@ class HuggingFaceLLMAdapter(SummarizationService):
             # Estimate model size
             model_size_gb = self._estimate_model_size(model_name)
             
-            logging.info(f"🔧 LLM adapter configured for CUDA on {self.device_name}")
+            logging.info(f"* LLM adapter configured for CUDA on {self.device_name}")
             if self.use_4bit:
                 logging.info(f"   Mode: 4-bit NF4 quantization (for 8GB VRAM)")
-                logging.info(f"   📊 Estimated VRAM: ~{model_size_gb:.1f} GB (model) + ~1.5 GB (context/overhead)")
-                logging.info(f"   📊 Total estimated: ~{model_size_gb + 1.5:.1f} GB / 8.0 GB ({((model_size_gb + 1.5)/8.0)*100:.0f}%)")
+                logging.info(f"   * Estimated VRAM: ~{model_size_gb:.1f} GB (model) + ~1.5 GB (context/overhead)")
+                logging.info(f"   * Total estimated: ~{model_size_gb + 1.5:.1f} GB / 8.0 GB ({((model_size_gb + 1.5)/8.0)*100:.0f}%)")
             else:
-                logging.warning(f"   ⚠️  Mode: FP16 (BitsAndBytes not available - will use more VRAM!)")
-                logging.warning(f"   Install with: pip install bitsandbytes")
+                logging.warning(f"   *  Mode: FP16 (BitsAndBytes not available - will use more VRAM!)")
+                logging.warning(f"!  Install with: pip install bitsandbytes") # another warning for the user to make it working faster
         else:
             # CPU mode
             self.device = -1
             self.torch_dtype = torch.float32
             self.device_name = "CPU"
-            logging.info("🔧 LLM adapter configured for CPU (this may be slower)")
+            logging.info("* LLM adapter configured for CPU (this may be slower)")
         
-        # Load immediately if not lazy loading
         if not lazy_load:
             self._load_model()
     
     def _clean_summary_artifacts(self, text: str) -> str:
         """
         Remove structural artifacts and formatting noise from model output.
-        This ensures clean, consistent summaries without meta-commentary.
+        This ensures clean, consistent summaries without meta-commentary in the final output (!).
         """
         import re
         
@@ -419,7 +407,7 @@ class HuggingFaceLLMAdapter(SummarizationService):
         for pattern in meta_phrases:
             cleaned = re.sub(pattern, '', cleaned, flags=re.MULTILINE | re.IGNORECASE)
         
-        # Clean up excessive whitespace
+        # Clean up excessive whitespace to spare the memory
         cleaned = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned)  # Max 2 consecutive newlines
         cleaned = re.sub(r'^\s+', '', cleaned, flags=re.MULTILINE)  # Remove leading spaces per line
         cleaned = cleaned.strip()
@@ -427,7 +415,9 @@ class HuggingFaceLLMAdapter(SummarizationService):
         return cleaned
     
     def _estimate_model_size(self, model_name: str) -> float:
-        """Estimate model VRAM usage in GB based on model name (4-bit quantized)"""
+        """Estimate model VRAM usage in GB based on model name (4-bit quantized) 
+           It's needed for choosing the right model for limited VRAM systems"""
+
         # Extract parameter size from model name
         if "7b" in model_name.lower() or "7-b" in model_name.lower():
             # 7B model in 4-bit: ~3.5 GB base + ~2GB context = 5.5GB (TOO BIG for 8GB)
@@ -451,15 +441,15 @@ class HuggingFaceLLMAdapter(SummarizationService):
     def _load_model(self):
         """Load the LLM model into memory"""
         if self.pipe is not None:
-            logging.info("⚠️  LLM model already loaded, skipping")
+            logging.info("*  LLM model already loaded, skipping")
             return
         
-        logging.info(f"📥 Loading LLM model: {self.model_name}")
+        logging.info(f"* Loading LLM model: {self.model_name}")
         log_cuda_memory_usage("Before LLM Load")
         
         try:
             if CUDA_AVAILABLE and self.use_4bit:
-                # 4-bit quantization configuration for 8GB VRAM
+                # 4-bit quantization configuration for limited VRAM
                 from transformers import BitsAndBytesConfig
                 
                 quantization_config = BitsAndBytesConfig(
@@ -479,27 +469,27 @@ class HuggingFaceLLMAdapter(SummarizationService):
                 except:
                     pass
                 
-                logging.info(f"   🔧 MEMORY OPTIMIZATIONS ENABLED:")
+                logging.info(f"   * MEMORY OPTIMIZATIONS ENABLED:")
                 logging.info(f"      • 4-bit NF4 quantization (4x compression)")
                 logging.info(f"      • Double quantization (extra ~0.4GB savings)")
                 logging.info(f"      • Flash Attention 2: {'Available' if use_flash_attn else 'Not available (transformers < 4.36)'}")
                 logging.info(f"      • Low CPU memory usage")
                 logging.info(f"      • GPU-only device placement (no CPU offload)")
                 
-                # For quantized models, we need to load model and tokenizer separately
-                # Force load entirely onto GPU 0 (avoid CPU offload/shared memory)
-                # device_map="auto" can cause spilling/offload to CPU (shared memory increase)
-                # CRITICAL: device_map needs string "cuda:0" not integer for quantized models!
+                # Force load model and tokenizer (separately) entirely onto GPU 0 (avoid CPU offload/shared memory)
+                # IMPORTANT insights: device_map needs string "cuda:0" not integer for quantized models!
                 model_kwargs = {
                     "quantization_config": quantization_config,
-                    "device_map": "cuda:0",  # Force GPU-only placement (must be string!)
+                    "device_map": "cuda:0",  # Force GPU-only
                     "trust_remote_code": True,
                     "torch_dtype": torch.float16,  # Will be overridden by quantization_config
                     "low_cpu_mem_usage": True,  # Minimize CPU RAM during loading
                 }
                 
                 # Try loading with Flash Attention 2 if available, fall back if not installed
-                flash_attn_loaded = False
+                # Flash Attention 2 can speed up attention computations significantly,
+                #   but it's hard to be installed in some systems - so we try/catch it here (not successfully).
+                flash_attn_loaded = False # it's turned off temporarily
                 if use_flash_attn:
                     try:
                         model_kwargs["attn_implementation"] = "flash_attention_2"
@@ -509,7 +499,7 @@ class HuggingFaceLLMAdapter(SummarizationService):
                             **model_kwargs
                         )
                         flash_attn_loaded = True
-                        logging.info(f"      ✅ Flash Attention 2 enabled")
+                        logging.info(f"      + Flash Attention 2 enabled")
                     except Exception as e:
                         if "flash_attn" in str(e).lower():
                             logging.info(f"      ⚠️  Flash Attention 2 not available (package not installed), using standard attention")
@@ -526,9 +516,9 @@ class HuggingFaceLLMAdapter(SummarizationService):
                     )
                 
                 # VERIFY 4-bit quantization was actually applied
-                logging.info("=" * 60)
-                logging.info("🔍 VERIFYING 4-BIT QUANTIZATION:")
-                logging.info("=" * 60)
+                logging.info("=" * 30)
+                logging.info("* VERIFYING 4-BIT QUANTIZATION:") # some models may fail to load in 4-bit for various reasons (!)
+                logging.info("=" * 30)
                 
                 # Check model dtype
                 first_param = next(self.model.parameters())
@@ -538,27 +528,27 @@ class HuggingFaceLLMAdapter(SummarizationService):
                 # Check if quantization config is present
                 if hasattr(self.model, 'config') and hasattr(self.model.config, 'quantization_config'):
                     quant_config = self.model.config.quantization_config
-                    logging.info(f"   ✅ Quantization config present: {quant_config}")
+                    logging.info(f"   + Quantization config present: {quant_config}")
                     if hasattr(quant_config, 'load_in_4bit'):
-                        logging.info(f"   ✅ load_in_4bit = {quant_config.load_in_4bit}")
+                        logging.info(f"   + load_in_4bit = {quant_config.load_in_4bit}")
                     if hasattr(quant_config, 'bnb_4bit_quant_type'):
-                        logging.info(f"   ✅ Quantization type = {quant_config.bnb_4bit_quant_type}")
+                        logging.info(f"   + Quantization type = {quant_config.bnb_4bit_quant_type}")
                 else:
-                    logging.error(f"   ❌ NO QUANTIZATION CONFIG FOUND - Model loaded in {actual_dtype}!")
-                    logging.error(f"   ❌ This means 4-bit quantization FAILED!")
+                    logging.error(f"   - NO QUANTIZATION CONFIG FOUND - Model loaded in {actual_dtype}!")
+                    logging.error(f"   - This means 4-bit quantization FAILED!")
                 
-                # Calculate actual model size in memory
+                # Approximate the actual model size in memory
                 model_size_mb = sum(p.numel() * p.element_size() for p in self.model.parameters()) / (1024 * 1024)
                 model_size_gb = model_size_mb / 1024
                 logging.info(f"   Model size in memory: {model_size_gb:.2f} GB")
                 
                 if model_size_gb > 3.0:
-                    logging.error(f"   ❌ Model is {model_size_gb:.2f}GB - TOO LARGE! 4-bit should be <2GB for 1.5B model")
-                    logging.error(f"   ❌ 4-bit quantization likely FAILED - model is in FP16!")
+                    logging.error(f"   - Model is {model_size_gb:.2f}GB - TOO LARGE! 4-bit should be <2GB for 1.5B model")
+                    logging.error(f"   - 4-bit quantization likely FAILED - model is in FP16!")
                 else:
-                    logging.info(f"   ✅ Model size looks correct for 4-bit quantization")
+                    logging.info(f"   + Model size looks correct for 4-bit quantization")
                 
-                logging.info("=" * 60)
+                logging.info("=" * 30)
                 
                 self.tokenizer = AutoTokenizer.from_pretrained(
                     self.model_name, 
@@ -574,13 +564,13 @@ class HuggingFaceLLMAdapter(SummarizationService):
                                    getattr(self.model.config, 'max_sequence_length', 4096))
                 logging.info(f"   Model context length: {max_length} tokens")
                 
-                # CRITICAL: Verify model is on GPU
+                # C H E C K (!): if model is on GPU
                 model_device = next(self.model.parameters()).device
                 logging.info(f"   Model loaded on device: {model_device}")
                 if "cpu" in str(model_device):
-                    logging.error("   ❌ MODEL IS ON CPU! This should not happen!")
+                    logging.error("   - MODEL IS ON CPU! This should not happen!")
                 else:
-                    logging.info(f"   ✅ Model confirmed on GPU: {model_device}")
+                    logging.info(f"   + Model confirmed on GPU: {model_device}")
                 
                 # Create pipeline WITHOUT device parameter (model already placed via device_map)
                 # When using accelerate/device_map, you CANNOT specify device in pipeline!
@@ -593,7 +583,7 @@ class HuggingFaceLLMAdapter(SummarizationService):
             else:
                 # Standard fp16 for CUDA or fp32 for CPU
                 if not BITSANDBYTES_AVAILABLE and self.use_4bit:
-                    logging.warning("⚠️  BitsAndBytes not available, loading model in FP16 instead")
+                    logging.warning("!  BitsAndBytes not available, loading model in FP16 instead (big VRAM usage)")
                 
                 self.pipe = pipeline(
                     "text-generation",
@@ -602,10 +592,10 @@ class HuggingFaceLLMAdapter(SummarizationService):
                     torch_dtype=self.torch_dtype,
                 )
             
-            logging.info(f"✅ LLM model loaded successfully on {self.device_name}")
+            logging.info(f"+ LLM model loaded successfully on {self.device_name}")
             log_cuda_memory_usage("After LLM Load")
         except Exception as e:
-            logging.error(f"❌ Failed to load LLM model: {e}")
+            logging.error(f"- Failed to load LLM model: {e}")
             raise
     
     def unload_model(self):
@@ -613,7 +603,7 @@ class HuggingFaceLLMAdapter(SummarizationService):
         if self.pipe is None:
             return
         
-        logging.info("�️  Unloading LLM model from memory")
+        logging.info("*  Unloading LLM model from memory")
         log_cuda_memory_usage("Before LLM Unload")
         
         # Delete all references
@@ -634,7 +624,7 @@ class HuggingFaceLLMAdapter(SummarizationService):
             gc.collect()
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-            logging.info("✅ CUDA cache cleared after LLM unload")
+            logging.info("+ CUDA cache cleared after LLM unload")
         
         log_cuda_memory_usage("After LLM Unload")
 
@@ -643,14 +633,14 @@ class HuggingFaceLLMAdapter(SummarizationService):
         if self.pipe is None:
             self._load_model()
         
-        logging.info(f"💬 Summarizing with Hugging Face pipeline ({self.device_name}): {self.model_name}")
+        logging.info(f"* Summarizing with Hugging Face pipeline ({self.device_name}): {self.model_name}")
         logging.info(f"   Prompt length: {len(prompt)} characters")
         logging.info(f"   Starting generation...")
         
-        # === MEMORY CHECK 1: After Model Load ===
-        logging.info("=" * 60)
-        logging.info("📊 GPU MEMORY CHECK 1: After Model Load")
-        logging.info("=" * 60)
+        logging.info("=" * 30)
+        logging.info("* GPU MEMORY CHECK 1: After Model Load")
+        logging.info("=" * 30)
+
         mem_info = get_cuda_memory_info()
         if "error" not in mem_info:
             allocated_gb = mem_info['allocated_gb']
@@ -659,22 +649,22 @@ class HuggingFaceLLMAdapter(SummarizationService):
             logging.info(f"   Allocated: {allocated_gb:.2f} GB ({used_percent:.1f}%)")
             logging.info(f"   Free:      {mem_info['free_gb']:.2f} GB / {total_gb:.2f} GB")
             
-            if used_percent > 85:
-                logging.warning(f"   ⚠️  WARNING: Model alone uses {used_percent:.1f}% of VRAM!")
+            if used_percent > 85: # model is only one part, we need to put into the VRAM also KVCACHE (could be bigger) and other stuff
+                logging.warning(f"   ! WARNING: Model alone uses {used_percent:.1f}% of VRAM!")
             else:
-                logging.info(f"   ✅ Model loaded, using {used_percent:.1f}% of VRAM")
-        logging.info("=" * 60)
+                logging.info(f"   + Model loaded, using {used_percent:.1f}% of VRAM")
+        logging.info("=" * 30)
         
         # Check prompt length and tokenize
         if self.pipe.tokenizer:
             prompt_tokens = len(self.pipe.tokenizer.encode(prompt))
-            logging.info(f"📝 Input tokens: {prompt_tokens:,}")
+            logging.info(f"* Input tokens: {prompt_tokens:,}")
             
             # Get model's max context
             max_length = getattr(self.model.config if self.model else self.pipe.model.config, 
                                'max_position_embeddings', 4096)
-            logging.info(f"📏 Model max context: {max_length:,} tokens")
-            logging.info(f"📊 Context usage: {prompt_tokens:,} / {max_length:,} ({(prompt_tokens/max_length)*100:.1f}%)")
+            logging.info(f"* Model max context: {max_length:,} tokens")
+            logging.info(f"* Context usage: {prompt_tokens:,} / {max_length:,} ({(prompt_tokens/max_length)*100:.1f}%)")
             
             # BALANCED: Auto-truncate to prevent KV cache OOM while maximizing GPU utilization
             # KV cache memory = input_tokens × 2 (K+V) × num_layers × hidden_dim × 2 bytes (fp16)
@@ -682,25 +672,25 @@ class HuggingFaceLLMAdapter(SummarizationService):
             max_input_tokens = 6500  # BALANCED for 8GB VRAM (75-80% GPU utilization, safe headroom)
             
             if prompt_tokens > max_input_tokens:
-                logging.warning(f"⚠️  Prompt ({prompt_tokens:,} tokens) exceeds VRAM safe limit ({max_input_tokens:,})")
-                logging.warning(f"   🔪 AUTO-TRUNCATING to prevent KV cache OOM...")
-                logging.warning(f"   💡 KV cache would use ~{(prompt_tokens/1000)*1.0:.1f}GB - TOO MUCH for 8GB GPU!")
+                logging.warning(f"!  Prompt ({prompt_tokens:,} tokens) exceeds VRAM safe limit ({max_input_tokens:,})")
+                logging.warning(f"   * AUTO-TRUNCATING to prevent KV cache OOM...")
+                logging.warning(f"   * KV cache would use ~{(prompt_tokens/1000)*1.0:.1f}GB - TOO MUCH for 8GB GPU!")
                 
                 # Tokenize and truncate
                 tokens = self.pipe.tokenizer.encode(prompt, truncation=True, max_length=max_input_tokens)
                 prompt = self.pipe.tokenizer.decode(tokens, skip_special_tokens=True)
                 prompt_tokens = len(tokens)
                 
-                logging.warning(f"   ✂️  Truncated to {prompt_tokens:,} tokens (KV cache: ~{(prompt_tokens/1000)*1.0:.1f}GB)")
-                logging.warning(f"   💡 TIP: Use chunked summarization for long transcripts!")
+                logging.warning(f"   *  Truncated to {prompt_tokens:,} tokens (KV cache: ~{(prompt_tokens/1000)*1.0:.1f}GB)")
+                logging.warning(f"   * TIP: Use chunked summarization for long transcripts!")
             elif prompt_tokens > 2000:
-                logging.warning(f"⚠️  Large prompt ({prompt_tokens:,} tokens) - KV cache will use ~{(prompt_tokens/1000)*1.0:.1f}GB")
+                logging.warning(f"*  Large prompt ({prompt_tokens:,} tokens) - KV cache will use ~{(prompt_tokens/1000)*1.0:.1f}GB")
                 logging.warning(f"   Consider using chunked summarization for better memory efficiency")
         
         # === MEMORY CHECK 2: After Tokenization (before generation) ===
-        logging.info("=" * 60)
-        logging.info("📊 GPU MEMORY CHECK 2: After Tokenization (Before Generation)")
-        logging.info("=" * 60)
+        logging.info("=" * 30)
+        logging.info("* GPU MEMORY CHECK 2: After Tokenization (Before Generation)")
+        logging.info("=" * 30)
         mem_info_before_gen = get_cuda_memory_info()
         if "error" not in mem_info_before_gen:
             allocated_gb = mem_info_before_gen['allocated_gb']
@@ -710,23 +700,23 @@ class HuggingFaceLLMAdapter(SummarizationService):
             logging.info(f"   Free:      {mem_info_before_gen['free_gb']:.2f} GB / {total_gb:.2f} GB")
             
             if used_percent > 90:
-                logging.error(f"   ❌ CRITICAL: {used_percent:.1f}% VRAM used - likely to OOM!")
+                logging.error(f"   ! CRITICAL: {used_percent:.1f}% VRAM used - likely to OOM!")
                 logging.error(f"   The context ({prompt_tokens:,} tokens) may be too large for this GPU")
             elif used_percent > 80:
-                logging.warning(f"   ⚠️  WARNING: {used_percent:.1f}% VRAM used - generation may be slow")
+                logging.warning(f"   !  WARNING: {used_percent:.1f}% VRAM used - generation may be slow")
             else:
-                logging.info(f"   ✅ Ready for generation, {used_percent:.1f}% VRAM used")
-        logging.info("=" * 60)
+                logging.info(f"   + Ready for generation, {used_percent:.1f}% VRAM used")
+        logging.info("=" * 30)
         
         try:
-            logging.info("🚀 Starting text generation with MEMORY-OPTIMIZED settings...")
+            logging.info("* Starting text generation with MEMORY-OPTIMIZED settings...")
             
             # AGGRESSIVE MEMORY OPTIMIZATIONS for generation
             # Phi-3 has DynamicCache.seen_tokens compatibility issue with transformers < 4.45
             # Disable cache for Phi-3 to avoid errors
             use_cache_setting = False if "phi" in self.model_name.lower() else True
             if not use_cache_setting:
-                logging.info("   ⚠️  Disabling cache for Phi-3 compatibility (transformers version)")
+                logging.info("   !  Disabling cache for Phi-3 compatibility (transformers version)")
             
             generate_kwargs = {
                 "max_new_tokens": 1536,        # BALANCED for quality without OOM risk
@@ -748,7 +738,7 @@ class HuggingFaceLLMAdapter(SummarizationService):
                 if hasattr(self.model, 'gradient_checkpointing_enable'):
                     try:
                         self.model.gradient_checkpointing_enable()
-                        logging.info("   ✅ Gradient checkpointing enabled (saves VRAM)")
+                        logging.info("   + Gradient checkpointing enabled (saves VRAM)")
                     except:
                         pass  # Some models don't support this
                 
@@ -761,30 +751,28 @@ class HuggingFaceLLMAdapter(SummarizationService):
                     torch.backends.cuda.matmul.allow_tf32 = True
                     torch.backends.cudnn.allow_tf32 = True
             
-            # Generate with parameters optimized for summarization
-            # CRITICAL: Tokenize manually and move to GPU to ensure GPU execution
+            # Generate with parameters optimized for summarization (Tokenize manually and move to GPU to ensure GPU execution)
             inputs = self.pipe.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_input_tokens)
             
             # Move inputs to GPU explicitly
             if CUDA_AVAILABLE:
                 inputs = {k: v.to("cuda:0") for k, v in inputs.items()}
-                logging.info(f"   ✅ Inputs moved to GPU: {inputs['input_ids'].device}")
+                logging.info(f"   + Inputs moved to GPU: {inputs['input_ids'].device}")
             
-            # === CRITICAL GPU EXECUTION CHECK ===
-            logging.info("=" * 60)
-            logging.info("🚀 STARTING GPU GENERATION - WATCH GPU MEMORY NOW!")
-            logging.info("=" * 60)
+            # GPU EXECUTION CHECK
+            logging.info("=" * 30)
+            logging.info("* STARTING GPU GENERATION - WATCH GPU MEMORY NOW!")
+            logging.info("=" * 30)
             
-            # Get VRAM before generation
+            # Get VRAM - important user info before the CPU performance could be frozen by the CPU/RAM usage
             mem_before = get_cuda_memory_info()
             vram_before = mem_before.get('allocated_gb', 0) if mem_before else 0
             logging.info(f"   VRAM before generation: {vram_before:.2f} GB")
             logging.info(f"   Expected VRAM during generation: ~{vram_before + (prompt_tokens/1000)*1.0:.2f} GB")
-            logging.info(f"   ⚠️  If GPU usage doesn't spike, generation is on CPU!")
-            logging.info("=" * 60)
+            logging.info(f"   ?  If GPU usage doesn't spike, generation is on CPU! CHECK IT OUT in your Task Manager!")
+            logging.info("=" * 30)
             
             import time
-            # Brief pause to let you see the message before generation starts
             time.sleep(0.5)
             
             # Generate using model directly (bypass pipeline to ensure GPU usage)
@@ -803,15 +791,15 @@ class HuggingFaceLLMAdapter(SummarizationService):
                 )
             generation_time = time.time() - generation_start_time
             
-            # === GPU EXECUTION VERIFICATION ===
+            # GPU execution verification
             mem_after = get_cuda_memory_info()
             vram_after = mem_after.get('allocated_gb', 0) if mem_after else 0
             vram_increase = vram_after - vram_before
             tokens_per_sec = generate_kwargs['max_new_tokens'] / generation_time
             
-            logging.info("=" * 60)
-            logging.info("🔍 GPU EXECUTION VERIFICATION")
-            logging.info("=" * 60)
+            logging.info("=" * 30)
+            logging.info("* GPU EXECUTION VERIFICATION")
+            logging.info("=" * 30)
             logging.info(f"   VRAM before: {vram_before:.2f} GB")
             logging.info(f"   VRAM after:  {vram_after:.2f} GB")
             logging.info(f"   VRAM increase: {vram_increase:.2f} GB")
@@ -820,57 +808,56 @@ class HuggingFaceLLMAdapter(SummarizationService):
             
             # Check if generation actually used GPU (use speed as primary indicator)
             # GPU: >15 tokens/s for 1.5B model, CPU: <5 tokens/s
+            # Invoke error if generation is too slow (indicating CPU execution)
             if tokens_per_sec < 10:
                 # Too slow - definitely CPU!
-                logging.error("=" * 60)
-                logging.error("❌ GPU EXECUTION FAILED!")
-                logging.error("=" * 60)
+                logging.error("=" * 30)
+                logging.error("! GPU EXECUTION FAILED!")
+                logging.error("=" * 30)
                 logging.error(f"   Generation speed: {tokens_per_sec:.1f} tokens/s")
                 logging.error(f"   GPU should do >15 tokens/s, CPU does <5 tokens/s")
                 logging.error("   ")
-                logging.error("   🚨 GENERATION IS RUNNING ON CPU, NOT GPU!")
+                logging.error("   * GENERATION IS RUNNING ON CPU, NOT GPU!")
                 logging.error("   Stopping to avoid wasting time...")
-                logging.error("=" * 60)
+                logging.error("=" * 30)
                 raise RuntimeError("GPU execution verification failed - model is running on CPU despite being loaded on GPU. This is a critical bug.")
             else:
-                logging.info(f"   ✅ GPU EXECUTION CONFIRMED!")
+                logging.info(f"   + GPU EXECUTION CONFIRMED!")
                 logging.info(f"   Speed: {tokens_per_sec:.1f} tokens/s (GPU threshold: >15)")
                 if vram_increase > 0.1:
                     logging.info(f"   KV cache allocated: ~{vram_increase:.2f} GB")
                 else:
                     logging.info(f"   Note: KV cache not visible in VRAM stats (4-bit quantization)")
-                logging.info("=" * 60)
+                logging.info("=" * 30)
             
             # Decode output
             generated_text = self.pipe.tokenizer.decode(outputs[0], skip_special_tokens=True)
             
-            # === CRITICAL FIX: Extract only the newly generated text (not the prompt echo) ===
-            # The model echoes the prompt back, so we need to remove it to get only the summary
-            # We do this by decoding only the newly generated tokens (after the input)
+            # extract the output text
             input_length = inputs['input_ids'].shape[1]
             generated_tokens_only = outputs[0][input_length:]  # Get only new tokens after input
             extracted_summary = self.pipe.tokenizer.decode(generated_tokens_only, skip_special_tokens=True)
             
-            # === CLEAN UP ARTIFACTS: Remove structural labels and formatting noise ===
+            # Remove structural labels and formatting
             cleaned_summary = self._clean_summary_artifacts(extracted_summary)
             
-            logging.info("=" * 60)
-            logging.info("✂️  RESPONSE EXTRACTION & CLEANING")
-            logging.info("=" * 60)
+            logging.info("=" * 30)
+            logging.info("*  RESPONSE EXTRACTION & CLEANING")
+            logging.info("=" * 30)
             logging.info(f"   Total output tokens: {len(outputs[0])}")
             logging.info(f"   Input tokens (prompt): {input_length}")
             logging.info(f"   Generated tokens (new): {len(generated_tokens_only)}")
             logging.info(f"   Raw extracted length: {len(extracted_summary)} chars")
             logging.info(f"   Cleaned summary length: {len(cleaned_summary)} chars")
             logging.info(f"   Preview: {cleaned_summary[:150].replace(chr(10), ' ')}...")
-            logging.info("=" * 60)
+            logging.info("=" * 30)
             
             output = [{"generated_text": cleaned_summary}]
             
-            # === MEMORY CHECK 3: After Generation ===
-            logging.info("=" * 60)
-            logging.info("📊 GPU MEMORY CHECK 3: After Generation")
-            logging.info("=" * 60)
+            # GPU memory check after the output
+            logging.info("=" * 30)
+            logging.info("* GPU MEMORY CHECK 3: After Generation")
+            logging.info("=" * 30)
             mem_info_after = get_cuda_memory_info()
             if "error" not in mem_info_after:
                 allocated_gb = mem_info_after['allocated_gb']
@@ -878,16 +865,16 @@ class HuggingFaceLLMAdapter(SummarizationService):
                 used_percent = (allocated_gb / total_gb) * 100
                 logging.info(f"   Allocated: {allocated_gb:.2f} GB ({used_percent:.1f}%)")
                 logging.info(f"   Peak usage: {used_percent:.1f}%")
-            logging.info("=" * 60)
+            logging.info("=" * 30)
             
-            logging.info(f"✅ Summary generated successfully on {self.device_name}")
+            logging.info(f"+ Summary generated successfully on {self.device_name}")
             return output[0]["generated_text"]
         except Exception as e:
-            logging.error(f"❌ Summary generation failed: {e}")
+            logging.error(f"! Summary generation failed: {e}")
             if "out of memory" in str(e).lower():
-                logging.error("=" * 60)
-                logging.error("💥 OUT OF MEMORY ERROR")
-                logging.error("=" * 60)
+                logging.error("=" * 30)
+                logging.error("! OUT OF MEMORY ERROR")
+                logging.error("=" * 30)
                 logging.error(f"   Model VRAM: ~{mem_info.get('allocated_gb', 0):.2f} GB")
                 logging.error(f"   Input tokens: {prompt_tokens:,}")
                 logging.error("   ")
@@ -895,7 +882,7 @@ class HuggingFaceLLMAdapter(SummarizationService):
                 logging.error("   1. Use smaller model (Qwen 2.5-1.5B instead of Phi-3)")
                 logging.error("   2. Reduce transcription length (split audio)")
                 logging.error("   3. Use cloud API (no VRAM needed)")
-                logging.error("=" * 60)
+                logging.error("=" * 30)
             raise
 
 class GROQAdapter(SummarizationService):
@@ -933,9 +920,9 @@ class LocalLLMAdapter(SummarizationService):
 def get_device_diagnostics() -> str:
     """Get comprehensive device diagnostics for troubleshooting."""
     diagnostics = []
-    diagnostics.append("="*60)
+    diagnostics.append("="*30)
     diagnostics.append("DEVICE DIAGNOSTICS")
-    diagnostics.append("="*60)
+    diagnostics.append("="*30)
     
     # System info
     import platform
@@ -967,35 +954,25 @@ def get_device_diagnostics() -> str:
         diagnostics.append(f"\nMLX Configuration:")
         diagnostics.append(f"  MLX Whisper Available")
     
-    diagnostics.append("="*60)
+    diagnostics.append("="*30)
     return "\n".join(diagnostics)
 
-# -------------------------
 # Logging
-# -------------------------
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s")
 logging.info("Initializing Audio Transcription & Summarization application")
 logging.info(get_device_diagnostics())
 
-# -------------------------
 # OpenAI client (local)
-# -------------------------
 client = openai.OpenAI(
     base_url="http://localhost:1234/v1",
     api_key="dummy"
 )
-
-# -------------------------
 # Cache directory
-# -------------------------
 CACHE_DIR = Path(__file__).resolve().parent / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# -------------------------
-# Utility Functions
-# -------------------------
 def sha256_of_file(file_path: str, block_size: int = 65536) -> str:
-    """Compute SHA256 hash of a file."""
+    """Utility Functions: Compute SHA256 hash of a file."""
     logging.debug("Computing SHA256 for file: %s", file_path)
     p = Path(file_path)
     if not p.is_file():
@@ -1023,10 +1000,8 @@ def get_cached_transcription(audio_file: str, force_refresh=False) -> str | None
     logging.debug("No valid cache found")
     return None
 
-# -------------------------
-# Enums
-# -------------------------
 class WhisperModelChoice(StrEnum):
+    """Enums"""
     # MLX models (Apple Silicon)
     WHISPER_MLX_TINY = "mlx-community/whisper-tiny"
     WHISPER_MLX_SMALL = "mlx-community/whisper-small"
@@ -1038,42 +1013,40 @@ class WhisperModelChoice(StrEnum):
     WHISPER_HF_SMALL = "openai/whisper-small"
     WHISPER_HF_MEDIUM = "openai/whisper-medium"
     WHISPER_HF_LARGE_V3 = "openai/whisper-large-v3"
-    # ⭐ RECOMMENDED: Better quality models for lectures
-    WHISPER_HF_LARGE_V3_TURBO = "openai/whisper-large-v3-turbo"  # ⭐ 8x faster, ~6GB, excellent quality
-    DISTIL_WHISPER_LARGE_V3 = "distil-whisper/distil-large-v3"    # ⭐ 6x faster, ~3GB, 99% quality
+    # * RECOMMENDED: Better quality models for lectures
+    WHISPER_HF_LARGE_V3_TURBO = "openai/whisper-large-v3-turbo"  # * 8x faster, ~6GB, excellent quality
+    DISTIL_WHISPER_LARGE_V3 = "distil-whisper/distil-large-v3"    # * 6x faster, ~3GB, 99% quality
     DISTIL_WHISPER_LARGE_V2 = "distil-whisper/distil-large-v2"    # Alternative, slightly faster
     # Cloud API
     WHISPER_CLOUD = "cloud/whisper-1"
 
 class HuggingFaceLLMModelDefaultChoices(StrEnum):
-    # Original models (for MLX/CPU)
+    """Enums"""
     GRANITE_4_H_TINY = "ibm/granite-4-h-tiny"
     QWEN3_4B_2507 = "qwen/qwen3-4b-2507"
     GEMMA_3N_E4B = "google/gemma-3n-e4b"
     BAGUETTOTRON = 'PleIAs/Baguettotron'
     # 4-bit quantized models for CUDA (8GB VRAM, sequential loading)
-    # ✅ 4-bit quantization NOW WORKING - all models auto-quantized!
-    # 
     # Context Length Guide:
     # - Short transcripts (<15k tokens): Qwen 2.5-1.5B (32k context) ← Fast & safe
     # - Medium transcripts (15-30k tokens): Qwen 2.5-3B (32k context) ← Better quality
-    # - Long transcripts (30-100k tokens): Qwen 2.5-7B-128K ⭐ (128k context) ← LONG CONTEXT!
+    # - Long transcripts (30-100k tokens): Qwen 2.5-7B-128K (128k context) ← LONG CONTEXT!
     # - Very long (100k+ tokens): Use cloud API
     QWEN2_5_1_5B_INSTRUCT = "qwen2.5-1.5b-instruct"         # 1.5B, 32k context, ~3-4GB, fast
     QWEN2_5_3B_INSTRUCT = "qwen2.5-3b-instruct-8k"          # 3B, 32k context, ~4-5GB, good quality
-    QWEN2_5_7B_INSTRUCT_128K = "qwen2.5-7b-instruct-128k"   # ⭐ 7B, 128k context!, ~6-7GB, LONG CONTEXT
+    QWEN2_5_7B_INSTRUCT_128K = "qwen2.5-7b-instruct-128k"   # 7B, 128k context!, ~6-7GB, LONG CONTEXT
     PHI3_MINI_128K = "phi-3-mini-128k"                       # 3.8B, 128k, ~6-7GB (alternative)
     MISTRAL_7B_INSTRUCT = "mistral-7b-instruct-8k"          # 7B, 32k, ~7-8GB (tight)
 
 class BackendChoice(StrEnum):
+    """Enums"""
     LOCAL_OPENAI = "Local OpenAI"
     HUGGING_FACE = "Hugging Face"
     GROQ = "GROQ"
     LOCAL_LLM = "Local LLM"
 
-
-
 class PromptChoice(StrEnum):
+    """Enums"""
     SUMMARY = "Summary"
     SUMMARY_BULLETS = "Summary with bullet points"
     FLASHCARDS = "Flashcards"
@@ -1117,12 +1090,9 @@ Step 3: Output the refined set of flashcards.
     "Custom": "{transcription}"
 }
 
-# -------------------------
-# Transcription
-# -------------------------
 def get_transcription_service(model: str, lazy_load: bool = False) -> TranscriptionService:
     """
-    Get transcription service adapter.
+    Transcription: Get transcription service adapter.
     
     Args:
         model: Model identifier
@@ -1138,7 +1108,7 @@ def get_transcription_service(model: str, lazy_load: bool = False) -> Transcript
         # Use lazy loading for CUDA to optimize memory
         return HuggingFaceWhisperAdapter(model, lazy_load=lazy_load and CUDA_AVAILABLE)
     elif model.startswith("cloud/"):
-        # Assume API key is set in environment or config
+        # Assume API key is set in environment ("OPENAI_API_KEY") or config
         import os
         api_key = os.getenv("OPENAI_API_KEY", "")
         return CloudWhisperAdapter(api_key, model.split("/")[-1])
@@ -1185,7 +1155,6 @@ def get_available_whisper_models() -> list[str]:
     """Return list of available Whisper models based on hardware capabilities."""
     available_models = []
     
-    # Add MLX models if available (unchanged behavior for MLX)
     if MLX_AVAILABLE:
         available_models.extend([
             WhisperModelChoice.WHISPER_MLX_TINY.value,
@@ -1203,7 +1172,7 @@ def get_available_whisper_models() -> list[str]:
             WhisperModelChoice.WHISPER_HF_SMALL.value,
             WhisperModelChoice.WHISPER_HF_MEDIUM.value,
             WhisperModelChoice.WHISPER_HF_LARGE_V3.value,
-            # Add high-quality models (recommended for lectures)
+            # high-quality models - recommended for lecture recordings
             WhisperModelChoice.WHISPER_HF_LARGE_V3_TURBO.value,
             WhisperModelChoice.DISTIL_WHISPER_LARGE_V3.value,
             WhisperModelChoice.DISTIL_WHISPER_LARGE_V2.value,
@@ -1230,10 +1199,9 @@ def transcribe_file(audio_file: str, model: str, lazy_load: bool = False) -> str
     except Exception as e:
         logging.error("Error during transcription: %s", e)
         return f"Error during transcription: {e}"
-# -------------------------
-# Prompt / Metadata
-# -------------------------
+
 def format_file_metadata(audio_file: str, digest: str | None = None) -> str:
+    """Prompt/Metadata formatting for display"""
     logging.debug("Formatting metadata for file: %s", audio_file)
     p = Path(audio_file)
     if not p.exists():
@@ -1272,13 +1240,12 @@ def fetch_models(base_url: str, api_key: str = "") -> list[str]:
 def get_default_hf_models() -> list[str]:
     """Get default Hugging Face models based on hardware"""
     if CUDA_AVAILABLE:
-        # 4-bit quantized models for CUDA with 8GB VRAM
-        # MEASURED on RTX 4060 8GB - 4-bit quantization active!
+        # 4-bit quantized models for CUDA
         return [
-            HuggingFaceLLMModelDefaultChoices.QWEN2_5_1_5B_INSTRUCT.value,     # ⭐ BEST for 8GB: 1.5B, 32k, ~2-3GB
-            HuggingFaceLLMModelDefaultChoices.PHI3_MINI_128K.value,            # ⭐⭐ LONG CONTEXT: 3.8B, 128k!, ~4-5GB (RECOMMENDED)
+            HuggingFaceLLMModelDefaultChoices.QWEN2_5_1_5B_INSTRUCT.value,     # BEST for 8GB: 1.5B, 32k, ~2-3GB
+            HuggingFaceLLMModelDefaultChoices.PHI3_MINI_128K.value,            # LONG CONTEXT: 3.8B, 128k!, ~4-5GB (RECOMMENDED)
             HuggingFaceLLMModelDefaultChoices.QWEN2_5_3B_INSTRUCT.value,       # 3B, 32k, ~4-5GB
-            # HuggingFaceLLMModelDefaultChoices.QWEN2_5_7B_INSTRUCT_128K.value,  # ❌ TOO BIG: 7B uses shared memory (10GB+)
+            # HuggingFaceLLMModelDefaultChoices.QWEN2_5_7B_INSTRUCT_128K.value,  # - TOO BIG: 7B uses `share`d memory (10GB+)
         ]
     else:
         # Standard models for CPU/MLX
@@ -1321,11 +1288,11 @@ def get_summarization_service(backend: str, llm_model_choice: str, base_url: str
         llm_model_choice: Model identifier
         base_url: Base URL for API-based services
         api_key: API key for API-based services
-        lazy_load: If True (CUDA only), defer model loading until summarization time
+        lazy_load: If True (CUDA only), defer model loading until summarisation time
     """
     if backend == BackendChoice.HUGGING_FACE:
         if not HF_AVAILABLE:
-            raise ImportError("Hugging Face not available. Please install transformers and torch.")
+            raise ImportError("! Hugging Face not available. Please install transformers and torch.") # warning to install the needed libraries
         
         # Model mapping - includes both standard and 4-bit quantized models
         model_mapping = {
@@ -1335,11 +1302,9 @@ def get_summarization_service(backend: str, llm_model_choice: str, base_url: str
             "google/gemma-3n-e4b": "google/gemma-3-4B",
             "PleIAs/Baguettotron": "PleIAs/Baguettotron",
             # 4-bit quantized models for CUDA (8GB VRAM, sequential loading)
-            # Format: "display-name": "actual-hf-model-id"
-            # ✅ All models now auto-quantized to 4-bit on CUDA!
-            "qwen2.5-1.5b-instruct": "Qwen/Qwen2.5-1.5B-Instruct",           # 1.5B, 32k, ~3-4GB
+            "qwen2.5-1.5b-instruct": "Qwen/Qwen2.5-1.5B-Instruct",           # 1.5B, 32k, ~3-4GB - the only which works well (for 8GB VRAM so far)
             "qwen2.5-3b-instruct-8k": "Qwen/Qwen2.5-3B-Instruct",            # 3B, 32k, ~4-5GB
-            "qwen2.5-7b-instruct-128k": "Qwen/Qwen2.5-7B-Instruct",          # ⭐ 7B, 128k!, ~6-7GB
+            "qwen2.5-7b-instruct-128k": "Qwen/Qwen2.5-7B-Instruct",          # 7B, 128k!, ~6-7GB
             "phi-3-mini-128k": "microsoft/Phi-3-mini-128k-instruct",         # 3.8B, 128k, ~6-7GB
             "mistral-7b-instruct-8k": "mistralai/Mistral-7B-Instruct-v0.2",  # 7B, 32k, ~7-8GB
         }
@@ -1417,15 +1382,12 @@ def safe_generate_summary(prompt: str, llm_model_choice: str, backend: str, base
         logging.error("Error generating summary: %s", e)
         return f"Error generating summary: {e}"
 
-# -------------------------
-# CUDA Memory Management
-# -------------------------
 def clear_cuda_cache():
-    """Clear CUDA cache if available."""
+    """CUDA Memory Management: Clear CUDA cache if available."""
     if CUDA_AVAILABLE:
         try:
             torch.cuda.empty_cache()
-            logging.info("🧹 CUDA cache cleared")
+            logging.info("* CUDA cache cleared")
         except Exception as e:
             logging.warning(f"Failed to clear CUDA cache: {e}")
 
@@ -1435,45 +1397,43 @@ def log_cuda_memory_usage(stage: str):
         mem_info = get_cuda_memory_info()
         if "error" not in mem_info:
             logging.info(
-                f"📊 CUDA Memory [{stage}]: "
+                f"* CUDA Memory [{stage}]: "
                 f"Allocated: {mem_info['allocated_gb']:.2f}GB, "
                 f"Reserved: {mem_info['reserved_gb']:.2f}GB, "
                 f"Free: {mem_info['free_gb']:.2f}GB / {mem_info['total_gb']:.2f}GB"
             )
 
-# -------------------------
-# Chunked Summarization (MapReduce Pattern)
-# -------------------------
 def chunk_text_by_tokens(text: str, max_tokens: int = 20000, overlap_tokens: int = 500) -> list[str]:
     """
+    Chunked Summarization (MapReduce Pattern)
     Split text into overlapping chunks based on approximate token count.
     
     Args:
         text: Text to split
-        max_tokens: Maximum tokens per chunk (default 20k for 32k models with margin)
+        max_tokens: Maximum tokens per chunk (default 20k for 32k models with margin - USE 32k models only)
         overlap_tokens: Overlap between chunks for context continuity
     
     Returns:
         List of text chunks
     """
-    logging.info(f"      🔄 Chunking: Splitting {len(text)} chars into {max_tokens}-token chunks...")
+    logging.info(f"      * Chunking: Splitting {len(text)} chars into {max_tokens}-token chunks...")
     
-    # Rough estimate: 1 token ≈ 0.75 words
+    # Rough estimate: 1 token ≈ 0.75 words - ASSUMPTION
     import time
     start_time = time.time()
     
-    logging.info(f"      🔄 Step 1/4: Splitting text into words...")
+    logging.info(f"      * Step 1/4: Splitting text into words...")
     words = text.split()
-    logging.info(f"      ✅ {len(words):,} words found ({time.time()-start_time:.2f}s)")
+    logging.info(f"      * {len(words):,} words found ({time.time()-start_time:.2f}s)")
     
     words_per_chunk = int(max_tokens * 0.75)
     overlap_words = int(overlap_tokens * 0.75)
     
     if len(words) <= words_per_chunk:
-        logging.info(f"      ✅ Text fits in single chunk, no splitting needed")
+        logging.info(f"      + Text fits in single chunk, no splitting needed")
         return [text]
     
-    logging.info(f"      🔄 Step 2/4: Calculating chunk boundaries...")
+    logging.info(f"      * Step 2/4: Calculating chunk boundaries...")
     logging.info(f"         Words per chunk: {words_per_chunk:,}")
     logging.info(f"         Overlap: {overlap_words:,} words")
     
@@ -1481,7 +1441,7 @@ def chunk_text_by_tokens(text: str, max_tokens: int = 20000, overlap_tokens: int
     start = 0
     chunk_count = 0
     
-    logging.info(f"      🔄 Step 3/4: Creating chunks...")
+    logging.info(f"      * Step 3/4: Creating chunks...")
     while start < len(words):
         chunk_count += 1
         end = min(start + words_per_chunk, len(words))
@@ -1498,7 +1458,7 @@ def chunk_text_by_tokens(text: str, max_tokens: int = 20000, overlap_tokens: int
         
         # If we've reached the end, stop
         if end >= len(words):
-            logging.info(f"         ✅ Reached end of text at word {end:,}")
+            logging.info(f"         + Reached end of text at word {end:,}")
             break
         
         # Move start with overlap (but ensure we always advance)
@@ -1506,14 +1466,14 @@ def chunk_text_by_tokens(text: str, max_tokens: int = 20000, overlap_tokens: int
         if next_start <= start:
             # Overlap too large, just move forward by at least 1 word
             next_start = start + max(1, words_per_chunk // 2)
-            logging.warning(f"         ⚠️  Overlap too large, advancing by {next_start - start:,} words")
+            logging.warning(f"         !  Overlap too large, advancing by {next_start - start:,} words")
         
         advance_amount = next_start - start
         logging.info(f"         Next chunk will start at word {next_start:,} (advanced {advance_amount:,} words)")
         start = next_start
     
     elapsed = time.time() - start_time
-    logging.info(f"      ✅ Step 4/4: Chunking complete! Created {len(chunks)} chunks in {elapsed:.2f}s")
+    logging.info(f"      + Step 4/4: Chunking complete! Created {len(chunks)} chunks in {elapsed:.2f}s")
     
     return chunks
 
@@ -1534,9 +1494,9 @@ def summarize_in_chunks(llm_service, transcription: str, prompt_template: str, m
     Returns:
         Final iteratively-refined summary
     """
-    logging.info("="*60)
-    logging.info("📚 CHUNKED SUMMARIZATION (Iterative Refinement)")
-    logging.info("="*60)
+    logging.info("="*30)
+    logging.info("* CHUNKED SUMMARIZATION (Iterative Refinement)")
+    logging.info("="*30)
     logging.info(f"   Transcription length: {len(transcription)} chars")
     logging.info(f"   Max tokens per chunk: {max_tokens_per_chunk}")
     
@@ -1547,7 +1507,7 @@ def summarize_in_chunks(llm_service, transcription: str, prompt_template: str, m
     logging.info("   Splitting transcription into chunks...")
     chunks = chunk_text_by_tokens(transcription, max_tokens=max_tokens_per_chunk)
     num_chunks = len(chunks)
-    logging.info(f"   ✅ Chunking complete: {num_chunks} chunks created")
+    logging.info(f"   + Chunking complete: {num_chunks} chunks created")
     
     logging.info(f"   Split into {num_chunks} chunks")
     for i, chunk in enumerate(chunks, 1):
@@ -1557,11 +1517,11 @@ def summarize_in_chunks(llm_service, transcription: str, prompt_template: str, m
         preview = chunk[:100].replace('\n', ' ')
         logging.info(f"   Chunk {i}: ~{word_count:,} words (~{est_tokens:,} tokens)")
         logging.info(f"      Preview: \"{preview}...\"")
-    logging.info("="*60)
+    logging.info("="*30)
     
     if num_chunks == 1:
         # Single chunk - summarize directly using original template
-        logging.info("✅ Single chunk, using direct summarization")
+        logging.info("+ Single chunk, using direct summarization")
         prompt = prompt_template.replace("{transcription}", transcription)
         return llm_service.summarize(prompt)
     
@@ -1573,19 +1533,19 @@ def summarize_in_chunks(llm_service, transcription: str, prompt_template: str, m
         chunk_tokens = int(len(chunk.split()) * 1.3)
         estimated_kv_cache_gb = (chunk_tokens / 1000) * 1.0  # ~1GB per 1000 tokens
         
-        logging.info("="*60)
-        logging.info(f"📝 CHUNK {i}/{num_chunks} - Progress: {(i/num_chunks)*100:.0f}%")
-        logging.info("="*60)
+        logging.info("="*30)
+        logging.info(f"* CHUNK {i}/{num_chunks} - Progress: {(i/num_chunks)*100:.0f}%")
+        logging.info("="*30)
         logging.info(f"   Chunk size: ~{chunk_tokens:,} tokens")
-        logging.info(f"   💾 Estimated memory pressure:")
-        logging.info(f"      • Model: 1.08 GB (already loaded)")
-        logging.info(f"      • KV cache: ~{estimated_kv_cache_gb:.1f} GB")
-        logging.info(f"      • Total: ~{1.08 + estimated_kv_cache_gb:.1f} GB / 8.0 GB ({((1.08 + estimated_kv_cache_gb)/8.0)*100:.0f}%)")
-        logging.info("="*60)
+        logging.info(f"   * Estimated memory pressure:")
+        logging.info(f"      - Model: 1.08 GB (already loaded)")
+        logging.info(f"      - KV cache: ~{estimated_kv_cache_gb:.1f} GB")
+        logging.info(f"      - Total: ~{1.08 + estimated_kv_cache_gb:.1f} GB / 8.0 GB ({((1.08 + estimated_kv_cache_gb)/8.0)*100:.0f}%)")
+        logging.info("="*30)
         
         if i == 1:
             # FIRST CHUNK: Generate initial summary using original instructions
-            logging.info(f"   ▶ Generating initial summary from first chunk...")
+            logging.info(f"   * Generating initial summary from first chunk...")
             first_prompt = prompt_template.replace("{transcription}", chunk)
             
             try:
@@ -1595,21 +1555,22 @@ def summarize_in_chunks(llm_service, transcription: str, prompt_template: str, m
                 log_llm_interaction(i, num_chunks, first_prompt, current_summary)
                 
                 summary_preview = current_summary[:200].replace('\n', ' ')
-                logging.info(f"   ✅ Initial summary created ({len(current_summary)} chars): {summary_preview}...")
+                logging.info(f"   + Initial summary created ({len(current_summary)} chars): {summary_preview}...")
             except Exception as e:
-                logging.error(f"   ❌ Failed to summarize first chunk: {e}")
+                logging.error(f"   - Failed to summarize first chunk: {e}")
                 return f"Error: Failed to create initial summary - {e}"
         
         else:
             # SUBSEQUENT CHUNKS: Combine previous summary + new chunk
-            logging.info(f"   ▶ Refining summary with new content...")
+            logging.info(f"   * Refining summary with new content...")
             summary_tokens = int(len(current_summary.split()) * 1.3)
             combined_tokens = chunk_tokens + summary_tokens
             combined_kv_cache_gb = (combined_tokens / 1000) * 1.0
             logging.info(f"   Combined input: ~{combined_tokens:,} tokens (summary + new chunk)")
-            logging.info(f"   💾 KV cache for this iteration: ~{combined_kv_cache_gb:.1f} GB")
+            logging.info(f"   * KV cache for this iteration: ~{combined_kv_cache_gb:.1f} GB")
             
-            refinement_prompt = f"""You are an expert teaching assistant. You have a summary of a lecture so far, and now you need to extend it with new content from the next part of the lecture.
+            refinement_prompt = f"""
+You are an expert teaching assistant. You have a summary of a lecture so far, and now you need to extend it with new content from the next part of the lecture.
 
 Previous summary:
 {current_summary}
@@ -1626,16 +1587,16 @@ Extend the summary by naturally adding the new information. Keep the same format
                 log_llm_interaction(i, num_chunks, refinement_prompt, current_summary)
                 
                 summary_preview = current_summary[:200].replace('\n', ' ')
-                logging.info(f"   ✅ Summary refined ({len(current_summary)} chars): {summary_preview}...")
+                logging.info(f"   + Summary refined ({len(current_summary)} chars): {summary_preview}...")
             except Exception as e:
-                logging.error(f"   ❌ Failed to refine with chunk {i}: {e}")
-                logging.warning(f"   ⚠️  Continuing with previous summary...")
+                logging.error(f"   ! Failed to refine with chunk {i}: {e}")
+                logging.warning(f"   !  Continuing with previous summary...")
                 # Continue with existing summary if refinement fails
     
     # FINAL STEP: Clean and extract the final summary
-    logging.info("="*60)
-    logging.info("🧹 Final Summary Cleanup...")
-    logging.info("="*60)
+    logging.info("="*30)
+    logging.info("* Final Summary Cleanup...")
+    logging.info("="*30)
     
     # Apply comprehensive artifact cleaning
     # Note: We need to use a standalone cleaning function since we're outside the class
@@ -1678,22 +1639,208 @@ Extend the summary by naturally adding the new information. Keep the same format
     final_summary = re.sub(r'\n\s*\n\s*\n+', '\n\n', final_summary)  # Max 2 consecutive newlines
     final_summary = final_summary.strip()
     
-    logging.info(f"✅ Final summary complete: {len(final_summary)} characters")
+    logging.info(f"+ Final summary complete: {len(final_summary)} characters")
     logging.info(f"   Preview: {final_summary[:300].replace(chr(10), ' ')}...")
-    logging.info("="*60)
-    logging.info("📄 DETAILED LOG: All queries and responses saved to 'llm_interactions.log'")
-    logging.info("="*60)
+    logging.info("="*30)
+    logging.info("* DETAILED LOG: All queries and responses saved to 'llm_interactions.log'")
+    logging.info("="*30)
     
     return final_summary
 
-# -------------------------
-# Main workflow
-# -------------------------
-def transcribe_with_custom(audio, llm_model_choice, speech_to_text_model, prompt_template, backend, base_url, api_key):
+def generate_flashcards_from_chunks(llm_service, transcription: str, max_tokens_per_chunk: int = 5000) -> str:
+    """
+    Generate flashcards by processing transcription in chunks.
+    Each chunk generates Q&A pairs, then all are combined.
+    
+    Args:
+        llm_service: Summarization service to use
+        transcription: Full transcription text
+        max_tokens_per_chunk: Max tokens per chunk
+    
+    Returns:
+        Combined flashcards in Q&A format
+    """
     logging.info("="*60)
+    logging.info("📇 FLASHCARD GENERATION")
+    logging.info("="*60)
+    logging.info(f"   Transcription length: {len(transcription)} chars")
+    
+    # Split into chunks
+    chunks = chunk_text_by_tokens(transcription, max_tokens=max_tokens_per_chunk)
+    num_chunks = len(chunks)
+    logging.info(f"   + Split into {num_chunks} chunks")
+    
+    all_flashcards = []
+    flashcard_number = 1
+    
+    for i, chunk in enumerate(chunks, 1):
+        chunk_tokens = int(len(chunk.split()) * 1.3)
+        
+        logging.info("="*60)
+        logging.info(f"📝 CHUNK {i}/{num_chunks} - Progress: {(i/num_chunks)*100:.0f}%")
+        logging.info("="*60)
+        logging.info(f"   Chunk size: ~{chunk_tokens:,} tokens")
+        
+        # Create flashcard generation prompt for this chunk
+        flashcard_prompt = f"""You are an expert teaching assistant. Create flashcards from this lecture content.
+
+Lecture content:
+{chunk}
+
+Generate flashcards as clear question-and-answer pairs. Format each flashcard EXACTLY like this:
+
+Q: [Question based on the lecture content]
+A: [Answer based on the lecture content]
+
+Q: [Next question]
+A: [Next answer]
+
+Rules:
+1. Create 5-10 flashcards from this content
+2. Questions should test understanding of key concepts
+3. Answers should be concise but complete
+4. Use EXACTLY the format "Q: " and "A: " (with the colon and space)
+5. Leave a blank line between each Q&A pair
+6. No numbering, no extra labels, just Q: and A:
+
+Output the flashcards directly:"""
+        
+        try:
+            chunk_flashcards = llm_service.summarize(flashcard_prompt)
+            
+            # Clean up the response
+            import re
+            # Remove meta-commentary
+            chunk_flashcards = re.sub(r'^(Here are|Below are).*?:\s*', '', chunk_flashcards, flags=re.IGNORECASE | re.MULTILINE)
+            
+            # Extract Q&A pairs and renumber them
+            qa_pairs = []
+            lines = chunk_flashcards.split('\n')
+            current_q = None
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith('Q:') or line.startswith('q:'):
+                    if current_q:  # Save previous pair if exists
+                        qa_pairs.append((current_q, None))
+                    current_q = line[2:].strip()
+                elif line.startswith('A:') or line.startswith('a:'):
+                    if current_q:
+                        qa_pairs.append((current_q, line[2:].strip()))
+                        current_q = None
+            
+            # Format with numbering
+            for q, a in qa_pairs:
+                if a:  # Only add complete Q&A pairs
+                    all_flashcards.append(f"**Q{flashcard_number}:** {q}\n\n**A{flashcard_number}:** {a}\n")
+                    flashcard_number += 1
+            
+            logging.info(f"   + Generated {len(qa_pairs)} flashcards from this chunk")
+            
+        except Exception as e:
+            logging.error(f"   ! Failed to generate flashcards from chunk {i}: {e}")
+            continue
+    
+    # Combine all flashcards
+    if all_flashcards:
+        final_output = "# Flashcards\n\n" + "\n".join(all_flashcards)
+        logging.info("="*30)
+        logging.info(f"+ FLASHCARD GENERATION COMPLETE")
+        logging.info(f"   Total flashcards: {flashcard_number - 1}")
+        logging.info("="*30)
+        return final_output
+    else:
+        logging.warning("!  No flashcards generated")
+        return "No flashcards could be generated from the transcription."
+
+def transform_to_bullet_points(summary: str, llm_model_choice: str, backend: str, base_url: str, api_key: str) -> str:
+    """
+    Transform a summary into a well-structured bullet point format.
+    Groups content by meaning and presents as organized bullet points.
+    
+    Args:
+        summary: The raw summary text to transform
+        llm_model_choice: LLM model to use
+        backend: Backend service (HuggingFace, OpenAI, etc.)
+        base_url: Base URL for API
+        api_key: API key
+    
+    Returns:
+        Structured summary with bullet points grouped by topic
+    """
+    logging.info("   Transforming summary into structured bullet points...")
+    
+    bullet_transform_prompt = f"""You are an expert at organizing information. Take this summary and transform it into a well-structured bullet point format.
+
+Original summary:
+{summary}
+
+Transform this into a clear, organized Markdown bullet point format following these EXACT rules:
+
+1. For main section headers, use "## Header Name" (without colon at the end)
+2. After each header, add a blank line
+3. Then list bullet points with proper indentation:
+   - Use "- " for main bullets under a header
+   - Use "  - " (2 spaces + dash) for sub-bullets
+   - Use "    - " (4 spaces + dash) for deeper sub-bullets
+4. For numbered lists, use "1. ", "2. ", etc. with proper indentation
+5. Add a blank line between different sections/headers
+6. Keep bullet points concise and clear
+
+EXAMPLE FORMAT:
+## Section Name
+
+- Main point one
+- Main point two
+  - Sub-point under two
+  - Another sub-point
+- Main point three
+
+## Another Section
+
+1. First numbered item
+2. Second numbered item
+   - Sub-point under item 2
+3. Third numbered item
+
+Output ONLY the organized Markdown (no meta-commentary, no "Here is...", just the content):"""
+    
+    try:
+        service = get_summarization_service(backend, llm_model_choice, base_url, api_key, lazy_load=False)
+        structured_summary = service.summarize(bullet_transform_prompt)
+        
+        # Clean up any artifacts
+        import re
+        structured_summary = re.sub(r'^(Here is|Below is|The organized).*?:\s*', '', structured_summary, flags=re.IGNORECASE)
+        structured_summary = structured_summary.strip()
+        
+        # Fix common formatting issues
+        # Remove colons from headers
+        structured_summary = re.sub(r'^(##\s+[^:\n]+):\s*$', r'\1', structured_summary, flags=re.MULTILINE)
+        
+        # Ensure blank line after headers
+        structured_summary = re.sub(r'^(##\s+.+)$\n(?![\n])', r'\1\n\n', structured_summary, flags=re.MULTILINE)
+        
+        # Ensure blank lines between sections (before new headers)
+        structured_summary = re.sub(r'([^\n])\n(##\s+)', r'\1\n\n\2', structured_summary)
+        
+        # Fix bullet indentation: convert "°" or "◦" to proper Markdown
+        structured_summary = re.sub(r'^[°◦]\s+', '  - ', structured_summary, flags=re.MULTILINE)
+        
+        logging.info(f"   + Structured bullet points created ({len(structured_summary)} chars)")
+        return structured_summary
+    except Exception as e:
+        logging.error(f"   ! Failed to transform to bullet points: {e}")
+        logging.warning("   Returning original summary")
+        return summary
+
+def transcribe_with_custom(audio, llm_model_choice, speech_to_text_model, prompt_template, backend, base_url, api_key, prompt_type):
+    """Main workflow"""
+    logging.info("="*30)
     logging.info(f"Starting transcription and summarization on {DEVICE_TYPE}")
     logging.info(f"Backend: {backend} | Whisper Model: {speech_to_text_model}")
-    logging.info("="*60)
+    logging.info(f"Prompt Type: {prompt_type}")
+    logging.info("="*30)
     
     # Log initial CUDA memory if available
     log_cuda_memory_usage("Workflow Start")
@@ -1720,25 +1867,25 @@ def transcribe_with_custom(audio, llm_model_choice, speech_to_text_model, prompt
         # No cache - need to transcribe
         if CUDA_AVAILABLE and backend == BackendChoice.HUGGING_FACE:
             # === CUDA SEQUENTIAL PIPELINE ===
-            logging.info("🚀 CUDA Sequential Pipeline: Step 1 - Transcription")
-            logging.info("=" * 60)
+            logging.info("* CUDA Sequential Pipeline: Step 1 - Transcription")
+            logging.info("=" * 30)
             
             try:
                 # Step 1: Load Whisper model
-                logging.info("📥 STEP 1.1: Loading Whisper model")
+                logging.info("* STEP 1.1: Loading Whisper model")
                 whisper_service = get_transcription_service(speech_to_text_model, lazy_load=False)
                 
                 # Step 2: Transcribe audio with good quality
-                logging.info("🎤 STEP 1.2: Transcribing audio")
+                logging.info("* STEP 1.2: Transcribing audio")
                 transcription = whisper_service.transcribe(audio)
-                logging.info(f"✅ Transcription completed: {len(transcription)} characters")
+                logging.info(f"+ Transcription completed: {len(transcription)} characters")
                 
                 # Step 3: Unload Whisper and clear VRAM for LLM
                 if hasattr(whisper_service, 'unload_model'):
                     # Show memory BEFORE cleanup
-                    logging.info("=" * 60)
-                    logging.info("📊 GPU MEMORY BEFORE CLEANUP:")
-                    logging.info("=" * 60)
+                    logging.info("=" * 30)
+                    logging.info("* GPU MEMORY BEFORE CLEANUP:")
+                    logging.info("=" * 30)
                     mem_info_before = get_cuda_memory_info()
                     if "error" not in mem_info_before:
                         allocated_before = mem_info_before['allocated_gb']
@@ -1750,9 +1897,9 @@ def transcribe_with_custom(audio, llm_model_choice, speech_to_text_model, prompt
                         logging.info(f"   Allocated: {allocated_before:.2f} GB ({used_percent_before:.1f}%)")
                         logging.info(f"   Reserved:  {reserved_before:.2f} GB")
                         logging.info(f"   Free:      {free_before:.2f} GB / {total_gb:.2f} GB")
-                    logging.info("=" * 60)
+                    logging.info("=" * 30)
                     
-                    logging.info("🗑️  STEP 1.3: Unloading Whisper to free VRAM")
+                    logging.info("* STEP 1.3: Unloading Whisper to free VRAM")
                     whisper_service.unload_model()
                     # Extra cleanup to ensure VRAM is completely cleared
                     clear_cuda_cache()
@@ -1760,9 +1907,9 @@ def transcribe_with_custom(audio, llm_model_choice, speech_to_text_model, prompt
                     time.sleep(0.5)
                     
                     # Show memory AFTER cleanup
-                    logging.info("=" * 60)
-                    logging.info("📊 GPU MEMORY AFTER CLEANUP:")
-                    logging.info("=" * 60)
+                    logging.info("=" * 30)
+                    logging.info("* GPU MEMORY AFTER CLEANUP:")
+                    logging.info("=" * 30)
                     mem_info_after = get_cuda_memory_info()
                     if "error" not in mem_info_after:
                         allocated_after = mem_info_after['allocated_gb']
@@ -1781,22 +1928,22 @@ def transcribe_with_custom(audio, llm_model_choice, speech_to_text_model, prompt
                         logging.info(f"   Free:      {free_after:.2f} GB / {total_gb:.2f} GB")
                         
                         if used_percent_after < 10:
-                            logging.info("   ✅ EXCELLENT - VRAM successfully freed!")
+                            logging.info("   + EXCELLENT - VRAM successfully freed!")
                         elif used_percent_after < 25:
-                            logging.info("   ✅ GOOD - Most VRAM freed")
+                            logging.info("   + GOOD - Most VRAM freed")
                         else:
-                            logging.info("   ⚠️  WARNING - VRAM cleanup may be incomplete")
-                    logging.info("=" * 60)
-                    logging.info("✅ VRAM cleared, ready for next step")
+                            logging.info("   ! WARNING - VRAM cleanup may be incomplete")
+                    logging.info("=" * 30)
+                    logging.info("+ VRAM cleared, ready for next step")
                 
             except Exception as e:
-                logging.error(f"❌ Transcription failed: {e}")
+                logging.error(f"! Transcription failed: {e}")
                 return f"Error during transcription: {e}", "", format_file_metadata(audio, digest)
         else:
             # Non-CUDA or non-HF backend: use simple approach
             transcription = transcribe_file(audio, speech_to_text_model)
     else:
-        logging.info("✅ Loaded transcription from cache")
+        logging.info("+ Loaded transcription from cache")
     
     # Cache the transcription
     if not transcription.startswith("Error:") and transcription.strip():
@@ -1816,16 +1963,16 @@ def transcribe_with_custom(audio, llm_model_choice, speech_to_text_model, prompt
     # Display transcription stats
     word_count = len(transcription.split())
     char_count = len(transcription)
-    logging.info("=" * 60)
-    logging.info(f"� Transcription Statistics:")
+    logging.info("=" * 30)
+    logging.info(f"* Transcription Statistics:")
     logging.info(f"   Characters: {char_count:,}")
     logging.info(f"   Words: {word_count:,}")
     logging.info(f"   Estimated tokens: ~{int(word_count * 1.3):,}")
-    logging.info("=" * 60)
+    logging.info("=" * 30)
     
     # Clean transcription to reduce token count if needed
     if CUDA_AVAILABLE and len(transcription) > 15000:  # ~20k+ tokens
-        logging.info("🧹 Long transcription detected, applying cleanup...")
+        logging.info("* Long transcription detected, applying cleanup...")
         logging.info(f"   Original: {char_count:,} characters (~{word_count:,} words)")
         transcription = clean_transcription(transcription)
         word_count_after = len(transcription.split())
@@ -1846,46 +1993,53 @@ def transcribe_with_custom(audio, llm_model_choice, speech_to_text_model, prompt
     use_chunked_summarization = estimated_tokens > 2000  # Use chunking to keep KV cache manageable
     
     if use_chunked_summarization:
-        logging.info("="*60)
-        logging.info(f"⚠️  Transcription is LONG ({estimated_tokens:,} tokens > 25k limit)")
+        logging.info("="*30)
+        logging.info(f"*  Transcription is LONG ({estimated_tokens:,} tokens > 25k limit)")
         logging.info(f"   Will use CHUNKED SUMMARIZATION (MapReduce pattern)")
-        logging.info("="*60)
+        logging.info("="*30)
     
     prompt = prompt_template.replace("{transcription}", transcription)
     
     # CUDA OPTIMIZATION: Load LLM after Whisper is unloaded
     if CUDA_AVAILABLE and backend == BackendChoice.HUGGING_FACE:
         # === CUDA SEQUENTIAL PIPELINE: Part 2 ===
-        logging.info("=" * 60)
-        logging.info("� CUDA Sequential Pipeline: Step 2 - Summarization")
-        logging.info("=" * 60)
+        logging.info("=" * 30)
+        logging.info("* CUDA Sequential Pipeline: Step 2 - Summarization")
+        logging.info("=" * 30)
         
         try:
             # Step 4: Load LLM model (Whisper already unloaded)
-            logging.info("📥 STEP 2.1: Loading LLM model")
+            logging.info("* STEP 2.1: Loading LLM model")
             llm_service = get_summarization_service(
                 backend, llm_model_choice, base_url, api_key, lazy_load=False
             )
             
-            # Step 5: Conduct summarization action
-            logging.info("💬 STEP 2.2: Generating summary")
+            # Step 5: Conduct summarization/flashcard action
+            logging.info("* STEP 2.2: Generating output")
             
-            if use_chunked_summarization:
+            # Check if this is flashcard generation
+            if prompt_type == PromptChoice.FLASHCARDS.value:
+                # Use dedicated flashcard generation
+                logging.info("   Mode: FLASHCARD GENERATION")
+                summary = generate_flashcards_from_chunks(llm_service, transcription, max_tokens_per_chunk=5000)
+            elif use_chunked_summarization:
                 # Use iterative refinement chunking for long transcriptions
+                logging.info("   Mode: CHUNKED SUMMARIZATION")
                 summary = summarize_in_chunks(llm_service, transcription, prompt_template, max_tokens_per_chunk=5000)
             else:
                 # Direct summarization for shorter transcriptions
+                logging.info("   Mode: DIRECT SUMMARIZATION")
                 summary = llm_service.summarize(prompt)
             
-            logging.info(f"✅ Summary generated: {len(summary)} characters")
+            logging.info(f"+ Output generated: {len(summary)} characters")
             
             # Step 6: Unload LLM
             if hasattr(llm_service, 'unload_model'):
-                logging.info("🗑️  STEP 2.3: Unloading LLM model")
+                logging.info("* STEP 2.3: Unloading LLM model")
                 llm_service.unload_model()
             
             # Final cleanup and memory report
-            logging.info("🧹 Final VRAM cleanup...")
+            logging.info("* Final VRAM cleanup...")
             clear_cuda_cache()
             time.sleep(0.5)
             
@@ -1897,27 +2051,31 @@ def transcribe_with_custom(audio, llm_model_choice, speech_to_text_model, prompt
                 total_gb = mem_info['total_gb']
                 used_percent = (allocated_gb / total_gb) * 100
                 
-                logging.info("=" * 60)
-                logging.info("🎯 FINAL GPU MEMORY STATUS:")
+                logging.info("=" * 30)
+                logging.info("* FINAL GPU MEMORY STATUS:")
                 logging.info(f"   Allocated: {allocated_gb:.2f} GB ({used_percent:.1f}%)")
                 logging.info(f"   Free:      {free_gb:.2f} GB / {total_gb:.2f} GB")
                 
                 if used_percent < 10:
-                    logging.info("   ✅ EXCELLENT - VRAM completely freed!")
+                    logging.info("   + EXCELLENT - VRAM completely freed!")
                 elif used_percent < 25:
-                    logging.info("   ✅ GOOD - VRAM mostly freed")
+                    logging.info("   + GOOD - VRAM mostly freed")
                 else:
-                    logging.info("   ⚠️  WARNING - Some VRAM still in use")
-                logging.info("=" * 60)
+                    logging.info("   *  WARNING - Some VRAM still in use")
+                logging.info("=" * 30)
             
         except Exception as e:
-            logging.error(f"❌ Summarization failed: {e}")
+            logging.error(f"! Summarization failed: {e}")
             summary = f"Error generating summary: {e}"
     else:
         # Non-CUDA or non-HF backend: use simple approach
-        if use_chunked_summarization:
+        llm_service = get_summarization_service(backend, llm_model_choice, base_url, api_key, lazy_load=False)
+        
+        if prompt_type == PromptChoice.FLASHCARDS.value:
+            # Use dedicated flashcard generation
+            summary = generate_flashcards_from_chunks(llm_service, transcription, max_tokens_per_chunk=5000)
+        elif use_chunked_summarization:
             # Need to create service for chunking
-            llm_service = get_summarization_service(backend, llm_model_choice, base_url, api_key, lazy_load=False)
             summary = summarize_in_chunks(llm_service, transcription, prompt_template, max_tokens_per_chunk=5000)
         else:
             summary = safe_generate_summary(prompt, llm_model_choice, backend, base_url, api_key)
@@ -1926,9 +2084,17 @@ def transcribe_with_custom(audio, llm_model_choice, speech_to_text_model, prompt
         if CUDA_AVAILABLE:
             clear_cuda_cache()
 
-    logging.info("="*60)
-    logging.info("✅ COMPLETE: Transcription and summarization workflow finished")
-    logging.info("="*60)
+    # POST-PROCESSING: Transform to structured bullet points if that prompt type is selected
+    if prompt_type == PromptChoice.SUMMARY_BULLETS.value:
+        logging.info("="*30)
+        logging.info("* POST-PROCESSING: Transforming to structured bullet points")
+        logging.info("="*30)
+        summary = transform_to_bullet_points(summary, llm_model_choice, backend, base_url, api_key)
+        logging.info("+ Bullet point transformation complete")
+    
+    logging.info("="*30)
+    logging.info("* COMPLETE: Transcription and summarization workflow finished")
+    logging.info("="*30)
     return summary, transcription, file_meta
 
 # -------------------------
@@ -1978,6 +2144,24 @@ CUSTOM_CSS = """
     background: linear-gradient(135deg, #1e40af, #1d4ed8);
 }
 
+/* Red highlighted buttons */
+.red-button {
+    background: linear-gradient(135deg, #dc2626, #b91c1c) !important;
+    border: none !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3) !important;
+    border-radius: 8px !important;
+    padding: 10px 18px !important;
+    transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.2s ease !important;
+}
+
+.red-button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 16px rgba(220, 38, 38, 0.4) !important;
+    background: linear-gradient(135deg, #b91c1c, #991b1b) !important;
+}
+
 /* ---------- Body & Labels ---------- */
 body {
     background-color: #f3f4f6;
@@ -2019,25 +2203,25 @@ def get_hardware_status() -> str:
     
     # MLX status
     if MLX_AVAILABLE:
-        status_parts.append("✅ MLX (Apple Silicon)")
+        status_parts.append("+ MLX (Apple Silicon)")
     else:
-        status_parts.append("❌ MLX")
+        status_parts.append("! MLX")
     
     # CUDA status
     if CUDA_AVAILABLE:
         device_name = torch.cuda.get_device_name(0)
         memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        status_parts.append(f"✅ CUDA ({device_name}, {memory_gb:.1f}GB)")
+        status_parts.append(f"+ CUDA ({device_name}, {memory_gb:.1f}GB)")
     else:
-        status_parts.append("❌ CUDA")
+        status_parts.append("! CUDA")
     
     # CPU status
     if CPU_ONLY:
-        status_parts.append("⚠️ CPU Mode (No GPU acceleration)")
+        status_parts.append("! CPU Mode (No GPU acceleration)")
     
     # Additional info
     if HF_AVAILABLE:
-        status_parts.append("✅ Transformers")
+        status_parts.append("+ Transformers")
     
     return " | ".join(status_parts)
 
@@ -2051,11 +2235,11 @@ with gr.Blocks(theme=Soft(), css=CUSTOM_CSS) as demo:
         mem_info = get_cuda_memory_info()
         if "error" not in mem_info:
             gr.Markdown(
-                f"🎮 **GPU Memory:** {mem_info['free_gb']:.1f}GB free / {mem_info['total_gb']:.1f}GB total\n\n"
+                f"* **GPU Memory:** {mem_info['free_gb']:.1f}GB free / {mem_info['total_gb']:.1f}GB total\n\n"
                 f"**CUDA Optimizations Enabled:**\n"
-                f"- ✅ 4-bit quantized models (fits in 8GB VRAM)\n"
-                f"- ✅ Long audio support (>30s) with automatic chunking\n"
-                f"- ✅ FP16 precision for faster inference"
+                f"- 4-bit quantized models (fits in 8GB VRAM)\n"
+                f"- Long audio support (>30s) with automatic chunking\n"
+                f"- FP16 precision for faster inference"
             )
 
     with gr.Row():
@@ -2116,40 +2300,41 @@ with gr.Blocks(theme=Soft(), css=CUSTOM_CSS) as demo:
                     show_copy_button=True
                 )
             with gr.Row():
-                submit_btn = gr.Button("Transcribe & Summarize", variant="primary")
+                submit_btn = gr.Button("Transcribe & Summarise", variant="primary", elem_classes="red-button")
                 clear_btn = gr.ClearButton(
                     [audio_input, transcription_output, prompt_textbox, llm_model_dropdown, speech_to_text_dropdown, prompt_dropdown, backend_dropdown, api_key_input, base_url_input, fetch_models_btn, file_details],
-                    value="Clear"
+                    value="Clear",
+                    elem_classes="red-button"
                 )
 
-    summary_output = gr.Textbox(label="Summary", lines=8, show_copy_button=True, elem_id="summary-output")
+    summary_output = gr.Markdown(label="Summary", elem_id="summary-output")
 
     prompt_dropdown.change(update_prompt, inputs=prompt_dropdown, outputs=prompt_textbox)
     backend_dropdown.change(update_backend_settings, inputs=backend_dropdown, outputs=[api_key_input, base_url_input, fetch_models_btn, llm_model_dropdown])
     fetch_models_btn.click(fetch_and_update_models, inputs=[base_url_input, api_key_input], outputs=llm_model_dropdown)
     submit_btn.click(
         transcribe_with_custom,
-        inputs=[audio_input, llm_model_dropdown, speech_to_text_dropdown, prompt_textbox, backend_dropdown, base_url_input, api_key_input],
+        inputs=[audio_input, llm_model_dropdown, speech_to_text_dropdown, prompt_textbox, backend_dropdown, base_url_input, api_key_input, prompt_dropdown],
         outputs=[summary_output, transcription_output, file_details],
         queue=True
     )
 
 logging.info("Launching Gradio interface")
-logging.info("Note: You may see some h11 protocol warnings - these can be safely ignored.")
+logging.info("(Note: You may see some h11 protocol warnings - these can be safely ignored.)")
 logging.info("Access the app at: http://localhost:7860")
-logging.info("=" * 60)
+logging.info("=" * 30)
 
 try:
     demo.launch(
-        server_name="0.0.0.0",
+        server_name="127.0.0.1",
         server_port=7860,
         show_error=True,
         quiet=False
     )
 except KeyboardInterrupt:
-    logging.info("\n" + "=" * 60)
+    logging.info("\n" + "=" * 30)
     logging.info("Shutting down gracefully...")
-    logging.info("=" * 60)
+    logging.info("=" * 30)
 except Exception as e:
     logging.error(f"Error during launch: {e}")
     logging.error("This may be due to port conflicts or network issues.")
